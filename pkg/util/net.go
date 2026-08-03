@@ -216,6 +216,71 @@ func GetDefaultAddresses(nodeIP net.IP) (string, string, string, error) {
 	return "", "", "", fmt.Errorf("ip: %v is not ipv4 or ipv6", nodeIP)
 }
 
+// GetDefaultDualStackAddresses returns default dual-stack IPv4 + IPv6 ULA bind IP, cluster CIDRs, and service CIDRs.
+func GetDefaultDualStackAddresses(nodeIPs []net.IP) (string, string, string, error) {
+	if len(nodeIPs) > 0 && netutils.IsIPv6(nodeIPs[0]) {
+		return "::", "fd00:42::/56,10.42.0.0/16", "fd00:43::/112,10.43.0.0/16", nil
+	}
+	return "0.0.0.0", "10.42.0.0/16,fd00:42::/56", "10.43.0.0/16,fd00:43::/112", nil
+}
+
+// CheckDualStackSupported verifies that the host kernel supports both IPv4 and IPv6 sockets
+// and that nodeIPs includes both IPv4 and IPv6 addresses.
+func CheckDualStackSupported(nodeIPs []net.IP) error {
+	l4, err4 := net.Listen("tcp4", "127.0.0.1:0")
+	if err4 != nil {
+		return fmt.Errorf("dual-stack failed: IPv4 is disabled or unsupported on this host kernel: %w", err4)
+	}
+	l4.Close()
+
+	l6, err6 := net.Listen("tcp6", "[::1]:0")
+	if err6 != nil {
+		return fmt.Errorf("dual-stack failed: IPv6 is disabled or unsupported on this host kernel: %w", err6)
+	}
+	l6.Close()
+
+	if len(nodeIPs) > 0 {
+		dualNode, err := netutils.IsDualStackIPs(nodeIPs)
+		if err != nil || !dualNode {
+			return fmt.Errorf("--default-dual-stack requires node-ip to be dual-stack (e.g. --node-ip <IPv4>,<IPv6>). Current node-ip %v is single-stack", nodeIPs)
+		}
+	}
+
+	return nil
+}
+
+
+// ValidateNoCIDRConflict verifies that configured CIDRs do not overlap with active host interface IPs.
+func ValidateNoCIDRConflict(clusterCIDRs, serviceCIDRs []string) error {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil // If interface lookup fails, proceed without hard block
+	}
+	var allCIDRs []string
+	allCIDRs = append(allCIDRs, clusterCIDRs...)
+	allCIDRs = append(allCIDRs, serviceCIDRs...)
+	for _, cidrStr := range allCIDRs {
+		_, cidrNet, err := net.ParseCIDR(cidrStr)
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip != nil && !ip.IsLoopback() && cidrNet.Contains(ip) {
+				return fmt.Errorf("configured CIDR '%s' overlaps with active host interface IP '%s'", cidrStr, ip.String())
+			}
+		}
+	}
+	return nil
+}
+
+
 // GetFirstString returns the first IP4 address from a list of IP address strings.
 // If no IPv4 addresses are found, returns the first IPv6 address
 // if neither of IPv4 or IPv6 are found an error is raised.

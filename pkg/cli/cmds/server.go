@@ -25,6 +25,7 @@ type StartupHook func(context.Context, *sync.WaitGroup, StartupHookArgs) error
 
 type Server struct {
 	ClusterCIDR          cli.StringSlice
+	DefaultDualStack     bool
 	AgentToken           string
 	AgentTokenFile       string
 	Token                string
@@ -144,6 +145,11 @@ var (
 		Usage:       "(networking) IPv4/IPv6 network CIDRs to use for service IPs (default: 10.43.0.0/16)",
 		Destination: &ServerConfig.ServiceCIDR,
 	}
+	DefaultDualStack = &cli.BoolFlag{
+		Name:        "default-dual-stack",
+		Usage:       "(networking) Automatically configure default dual-stack IPv4/IPv6 CIDRs if not specified",
+		Destination: &ServerConfig.DefaultDualStack,
+	}
 	ServiceNodePortRange = &cli.StringFlag{
 		Name:        "service-node-port-range",
 		Usage:       "(networking) Port range to reserve for services with NodePort visibility",
@@ -247,6 +253,7 @@ var ServerFlags = []cli.Flag{
 	DataDirFlag,
 	ClusterCIDR,
 	ServiceCIDR,
+	DefaultDualStack,
 	ServiceNodePortRange,
 	ClusterDNS,
 	ClusterDomain,

@@ -307,6 +307,12 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 
 	// configure ClusterIPRanges. Use default 10.42.0.0/16 or fd00:42::/56 if user did not set it
 	_, defaultClusterCIDR, defaultServiceCIDR, _ := util.GetDefaultAddresses(nodeIPs[0])
+	if cmds.ServerConfig.DefaultDualStack {
+		if err := util.CheckDualStackSupported(nodeIPs); err != nil {
+			return err
+		}
+		_, defaultClusterCIDR, defaultServiceCIDR, _ = util.GetDefaultDualStackAddresses(nodeIPs)
+	}
 	if len(cmds.ServerConfig.ClusterCIDR.Value()) == 0 {
 		cmds.ServerConfig.ClusterCIDR.Set(defaultClusterCIDR)
 	}
@@ -336,7 +342,12 @@ func run(app *cli.Context, cfg *cmds.Server, leaderControllers server.CustomCont
 	// set ServiceIPRange to the first address (first defined IPFamily is preferred)
 	serverConfig.ControlConfig.ServiceIPRange = serverConfig.ControlConfig.ServiceIPRanges[0]
 
+	if err := util.ValidateNoCIDRConflict(cmds.ServerConfig.ClusterCIDR.Value(), cmds.ServerConfig.ServiceCIDR.Value()); err != nil {
+		return err
+	}
+
 	serverConfig.ControlConfig.ServiceNodePortRange, err = utilnet.ParsePortRange(cfg.ServiceNodePortRange)
+
 	if err != nil {
 		return errors.WithMessagef(err, "invalid port range %s", cfg.ServiceNodePortRange)
 	}
