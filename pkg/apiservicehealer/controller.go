@@ -7,12 +7,13 @@ import (
 	"strings"
 	"time"
 
-	coreclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
 	apiregistrationclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/apiregistration.k8s.io/v1"
+	coreclient "github.com/rancher/wrangler/v3/pkg/generated/controllers/core/v1"
 	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
@@ -287,7 +288,7 @@ func (h *Healer) getAPIServicesForGroup(group string) ([]*apiregistrationv1.APIS
 	var matches []*apiregistrationv1.APIService
 
 	if h.apiServices.Cache() != nil {
-		list, err := h.apiServices.Cache().List(metav1.ListOptions{})
+		list, err := h.apiServices.Cache().List(labels.Everything())
 		if err == nil {
 			for _, svc := range list {
 				if strings.ToLower(svc.Spec.Group) == group {
