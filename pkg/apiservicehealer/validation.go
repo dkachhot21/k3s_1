@@ -9,11 +9,19 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// groupRegex matches API group patterns such as metrics.k8s.io, custom.metrics.k8s.io, etc.
-var groupVersionRegex = regexp.MustCompile(`([a-zA-Z0-9][-a-zA-Z0-9_.]+\.[a-zA-Z]{2,})/([vV][a-zA-Z0-9]+)`)
+// groupVersionRegex matches API group/version path patterns, including:
+// 1. Domain-style groups (e.g. metrics.k8s.io/v1beta1, wardle.k8s.io/v1alpha1, cert-manager.io/v1)
+// 2. Short/core groups without dots (e.g. apps/v1, batch/v1)
+var groupVersionRegex = regexp.MustCompile(`\b([a-zA-Z0-9][-a-zA-Z0-9_.]*)/([vV][a-zA-Z0-9]+[a-zA-Z0-9._-]*)\b`)
+
+// apiServiceNameRegex matches APIService object name patterns (<version>.<group>),
+// e.g. v1beta1.metrics.k8s.io, v1alpha1.wardle.k8s.io, v1.cert-manager.io
+var apiServiceNameRegex = regexp.MustCompile(`\b([vV][a-zA-Z0-9]+)\.([a-zA-Z0-9][-a-zA-Z0-9_.]+\.[a-zA-Z]{2,})\b`)
 
 // IsNonStorableGroup checks whether an API group is permitted to be bypassed.
 // It checks default virtual groups, custom configured groups, and the KUBE_NON_STORABLE_API_GROUPS env var.
+// By default, ONLY purely virtual telemetry APIs (metrics.k8s.io, custom.metrics.k8s.io, external.metrics.k8s.io)
+// are allowed. All other API groups (core APIs, CRDs, and stateful aggregated APIServices) return false.
 func IsNonStorableGroup(group string, customGroups []string) bool {
 	group = strings.ToLower(strings.TrimSpace(group))
 	if group == "" {
@@ -33,6 +41,14 @@ func IsNonStorableGroup(group string, customGroups []string) bool {
 	}
 
 	if env := os.Getenv("KUBE_NON_STORABLE_API_GROUPS"); env != "" {
+		for _, g := range strings.Split(env, ",") {
+			if strings.ToLower(strings.TrimSpace(g)) == group {
+				return true
+			}
+		}
+	}
+
+	if env := os.Getenv("NON_STORABLE_API_GROUPS"); env != "" {
 		for _, g := range strings.Split(env, ",") {
 			if strings.ToLower(strings.TrimSpace(g)) == group {
 				return true
@@ -66,13 +82,16 @@ func ExtractFailingGroupsFromNamespace(ns *corev1.Namespace) []string {
 }
 
 // ExtractGroupsFromMessage extracts unique API group names from a discovery error message string.
+// It handles:
+// - Group/version path format (e.g. "metrics.k8s.io/v1beta1", "apps/v1", "wardle.k8s.io/v1alpha1")
+// - APIService name format (e.g. "v1beta1.metrics.k8s.io", "v1alpha1.wardle.k8s.io")
+// - Direct API group names
 func ExtractGroupsFromMessage(msg string) []string {
 	seen := make(map[string]bool)
 	var groups []string
 
-	// First match group/version patterns (e.g. metrics.k8s.io/v1beta1)
-	matches := groupVersionRegex.FindAllStringSubmatch(msg, -1)
-	for _, match := range matches {
+	// Match group/version path patterns (e.g. metrics.k8s.io/v1beta1, apps/v1, wardle.k8s.io/v1alpha1)
+	for _, match := range groupVersionRegex.FindAllStringSubmatch(msg, -1) {
 		if len(match) > 1 {
 			group := strings.ToLower(strings.TrimSpace(match[1]))
 			if group != "" && !seen[group] {
@@ -82,7 +101,18 @@ func ExtractGroupsFromMessage(msg string) []string {
 		}
 	}
 
-	// Also check known default groups directly in message in case version was omitted
+	// Match APIService name patterns (e.g. v1beta1.metrics.k8s.io, v1alpha1.wardle.k8s.io)
+	for _, match := range apiServiceNameRegex.FindAllStringSubmatch(msg, -1) {
+		if len(match) > 2 {
+			group := strings.ToLower(strings.TrimSpace(match[2]))
+			if group != "" && !seen[group] {
+				seen[group] = true
+				groups = append(groups, group)
+			}
+		}
+	}
+
+	// Check known default groups directly in message in case version was omitted
 	for _, defaultGroup := range DefaultNonStorableAPIGroups {
 		lowered := strings.ToLower(defaultGroup)
 		if strings.Contains(strings.ToLower(msg), lowered) && !seen[lowered] {
@@ -94,10 +124,10 @@ func ExtractGroupsFromMessage(msg string) []string {
 	return groups
 }
 
-// ValidateSafeToDetach verifies that EVERY failing API group blocking the namespace
-// belongs to the permitted non-storable virtual API list.
-// If any failing group is stateful (e.g. CRD, apps, core), detachment is rejected
-// to prevent orphaning persistent data in etcd.
+// ValidateSafeToDetach enforces that EVERY failing API group blocking namespace deletion
+// belongs strictly to the permitted non-storable virtual API list.
+// If ANY failing group is stateful/persistent (core APIs, CRDs, or stateful aggregated APIServices),
+// detachment is rejected to protect persistent etcd state from being orphaned.
 func ValidateSafeToDetach(failingGroups []string, customGroups []string) (bool, string) {
 	if len(failingGroups) == 0 {
 		return false, "no failing API groups detected in namespace discovery failure"
