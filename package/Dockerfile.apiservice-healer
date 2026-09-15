@@ -1,0 +1,10 @@
+FROM golang:1.26-alpine AS builder
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /bin/apiservice-healer ./cmd/apiservice-healer
+
+FROM scratch
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /bin/apiservice-healer /apiservice-healer
+USER 1000:1000
+ENTRYPOINT ["/apiservice-healer"]

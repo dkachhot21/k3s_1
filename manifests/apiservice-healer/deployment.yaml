@@ -1,0 +1,59 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apiservice-healer
+  namespace: kube-system
+  labels:
+    k8s-app: apiservice-healer
+spec:
+  replicas: 1
+  revisionHistoryLimit: 0
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: apiservice-healer
+  template:
+    metadata:
+      labels:
+        k8s-app: apiservice-healer
+    spec:
+      priorityClassName: "system-cluster-critical"
+      serviceAccountName: apiservice-healer
+      tolerations:
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
+        - key: "node-role.kubernetes.io/control-plane"
+          operator: "Exists"
+          effect: "NoSchedule"
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: apiservice-healer
+        image: "%{SYSTEM_DEFAULT_REGISTRY}%ge-kube/apiservice-healer:v0.1.0"
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: MAX_DETACH_DURATION
+          value: "5m"
+        - name: NON_STORABLE_API_GROUPS
+          value: "metrics.k8s.io,custom.metrics.k8s.io,external.metrics.k8s.io"
+        - name: POLL_INTERVAL
+          value: "10s"
+        - name: STATE_CONFIGMAP_NAMESPACE
+          value: "kube-system"
+        - name: STATE_CONFIGMAP_NAME
+          value: "apiservice-healer-state"
+        resources:
+          requests:
+            cpu: 20m
+            memory: 30Mi
+          limits:
+            memory: 60Mi
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
