@@ -171,6 +171,7 @@ if [ ! -x ${INSTALLBIN}/cni${BINARY_POSTFIX} ]; then
 fi
 
 echo Building k3s
+find pkg/deploy/embed -mindepth 1 ! -name .empty -delete
 cp -av manifests/* pkg/deploy/embed/
 cp -av build/static/* pkg/static/embed/
 CGO_CFLAGS="-DSQLITE_ENABLE_DBSTAT_VTAB=1 -DSQLITE_USE_ALLOCA=1" \

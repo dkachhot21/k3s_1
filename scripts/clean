@@ -3,3 +3,4 @@
 cd $(dirname $0)/..
 
 rm -rf dist bin build k3s hyperkube kubectl
+find pkg/deploy/embed -mindepth 1 ! -name .empty -delete 2>/dev/null || true
