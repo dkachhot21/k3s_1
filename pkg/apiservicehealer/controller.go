@@ -60,7 +60,6 @@ func Register(
 	}
 
 	namespaces.OnChange(ctx, ControllerName, h.onChangeNamespace)
-	namespaces.OnRemove(ctx, ControllerName, h.onRemoveNamespace)
 
 	go wait.UntilWithContext(ctx, h.sync, h.cfg.PollInterval)
 	logrus.Infof("[%s] APIService healer controller registered (max detach duration: %v, poll interval: %v)", ControllerName, h.cfg.MaxDetachDuration, h.cfg.PollInterval)
@@ -68,30 +67,32 @@ func Register(
 	return h, nil
 }
 
-// onChangeNamespace is triggered on any namespace update or creation.
+// onChangeNamespace is triggered on any namespace update, creation, or deletion event.
 func (h *Healer) onChangeNamespace(key string, ns *corev1.Namespace) (*corev1.Namespace, error) {
 	if ns == nil {
+		// Namespace has been finalized and removed from cache
+		h.cleanNamespaceFromWaiting(key)
 		return nil, nil
 	}
 
 	// Only act on namespaces marked for deletion
 	if ns.DeletionTimestamp == nil {
 		h.cleanNamespaceFromWaiting(ns.Name)
-		return ns, nil
+		return nil, nil
 	}
 
 	// Check if this namespace has an active NamespaceDeletionDiscoveryFailure condition
 	failingGroups := ExtractFailingGroupsFromNamespace(ns)
 	if len(failingGroups) == 0 {
 		h.cleanNamespaceFromWaiting(ns.Name)
-		return ns, nil
+		return nil, nil
 	}
 
 	// Safety Validation: Verify that ALL failing groups are strictly virtual non-storable
 	safe, reason := ValidateSafeToDetach(failingGroups, h.cfg.NonStorableGroups)
 	if !safe {
 		logrus.Warnf("[%s] Namespace %s deletion blocked by discovery failure, but auto-remediation aborted: %s", ControllerName, ns.Name, reason)
-		return ns, nil
+		return nil, nil
 	}
 
 	// For each failing non-storable group, find and temporarily detach the failing APIService
@@ -101,18 +102,8 @@ func (h *Healer) onChangeNamespace(key string, ns *corev1.Namespace) (*corev1.Na
 		}
 	}
 
-	return ns, nil
-}
-
-// onRemoveNamespace handles the event where a namespace is completely finalized and deleted from the cluster.
-func (h *Healer) onRemoveNamespace(key string, ns *corev1.Namespace) (*corev1.Namespace, error) {
-	nsName := key
-	if ns != nil && ns.Name != "" {
-		nsName = ns.Name
-	}
-
-	h.cleanNamespaceFromWaiting(nsName)
-	return ns, nil
+	// Return nil, nil so Wrangler never attempts to update/write back to the Namespace resource.
+	return nil, nil
 }
 
 // remediateFailingGroup identifies unavailable APIServices for the given group and detaches them.
